@@ -1,0 +1,63 @@
+# Build directories
+build/
+tmp/
+logs/
+
+# Hardware build artifacts
+*.bit
+*.ltx
+*.rpt
+*.log
+*.jou
+.Xil/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+
+# Software build artifacts
+*.o
+*.so
+*.so.*
+*.a
+*.ko
+*.mod.c
+*.mod
+.*.cmd
+.tmp_versions/
+Module.symvers
+modules.order
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Generated files
+build_config.mk
+*.pc
+
+# Temporary files
+*.tmp
+*.bak
+
+# Documentation build
+docs/_build/
+*.pdf
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Simulation
+*.vcd
+*.fsdb
+*.shm/
