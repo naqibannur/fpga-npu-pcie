@@ -1,5 +1,7 @@
 # FPGA NPU PCIe Project
 
+**⚠️ IMPORTANT NOTE: This is an initial development version. The HDL code and software components have not been tested yet and are provided as a starting framework for development.**
+
 A high-performance Neural Processing Unit (NPU) implementation on FPGA with PCIe interface for accelerated machine learning inference.
 
 ## Overview
