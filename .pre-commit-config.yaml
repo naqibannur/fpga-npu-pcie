@@ -1,0 +1,178 @@
+# Pre-commit Configuration for FPGA NPU Project
+# 
+# Automated code quality checks and formatting before commits
+# Ensures consistent code style and catches common issues early
+
+repos:
+  # Local hooks for project-specific checks
+  - repo: local
+    hooks:
+      # C/C++ code formatting
+      - id: clang-format
+        name: Format C/C++ code
+        entry: clang-format
+        language: system
+        files: \.(c|cpp|cc|cxx|h|hpp|hxx)$
+        args: [-i, --style=file]
+        
+      # Verilog/SystemVerilog formatting  
+      - id: verible-format
+        name: Format Verilog/SystemVerilog code
+        entry: verible-verilog-format
+        language: system
+        files: \.(sv|v)$
+        args: [--inplace]
+        
+      # Check for large files
+      - id: check-large-files
+        name: Check for large files
+        entry: python3
+        language: system
+        args: [-c, "
+import sys
+import os
+max_size = 1024 * 1024  # 1MB
+for file in sys.argv[1:]:
+    if os.path.getsize(file) > max_size:
+        print(f'File {file} is larger than {max_size} bytes')
+        sys.exit(1)
+"]
+        
+      # Custom security check
+      - id: security-check
+        name: Security vulnerability check
+        entry: python3
+        language: system
+        args: [-c, "
+import sys
+import re
+unsafe_patterns = [
+    r'strcpy\s*\(',
+    r'strcat\s*\(',
+    r'sprintf\s*\(',
+    r'gets\s*\(',
+    r'system\s*\(',
+]
+for file in sys.argv[1:]:
+    if file.endswith(('.c', '.cpp', '.h', '.hpp')):
+        with open(file, 'r') as f:
+            content = f.read()
+            for pattern in unsafe_patterns:
+                if re.search(pattern, content):
+                    print(f'Unsafe function found in {file}: {pattern}')
+                    sys.exit(1)
+"]
+        files: \.(c|cpp|cc|cxx|h|hpp|hxx)$
+
+  # Built-in hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      # General checks
+      - id: trailing-whitespace
+        exclude: \.(md|patch)$
+      - id: end-of-file-fixer
+        exclude: \.(md|patch)$
+      - id: check-yaml
+      - id: check-json
+      - id: check-xml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+      - id: detect-private-key
+      
+      # Python-specific (for scripts)
+      - id: check-ast
+        files: \.py$
+      - id: check-docstring-first
+        files: \.py$
+      - id: debug-statements
+        files: \.py$
+        
+      # Text formatting
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+      - id: check-case-conflict
+      
+  # Python code formatting and linting
+  - repo: https://github.com/psf/black
+    rev: 23.3.0
+    hooks:
+      - id: black
+        files: \.py$
+        
+  - repo: https://github.com/pycqa/isort
+    rev: 5.12.0
+    hooks:
+      - id: isort
+        files: \.py$
+        args: ["--profile", "black"]
+        
+  - repo: https://github.com/pycqa/flake8
+    rev: 6.0.0
+    hooks:
+      - id: flake8
+        files: \.py$
+        args: [--max-line-length=88, --extend-ignore=E203]
+        
+  # CMake formatting
+  - repo: https://github.com/cheshirekow/cmake-format-precommit
+    rev: v0.6.13
+    hooks:
+      - id: cmake-format
+        files: (CMakeLists\.txt|\.cmake)$
+        
+  # Markdown formatting
+  - repo: https://github.com/executablebooks/mdformat
+    rev: 0.7.16
+    hooks:
+      - id: mdformat
+        files: \.md$
+        args: [--wrap=80]
+        
+  # YAML formatting
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v2.7.1
+    hooks:
+      - id: prettier
+        files: \.(yaml|yml)$
+        
+  # License header check
+  - repo: https://github.com/Lucas-C/pre-commit-hooks
+    rev: v1.5.1
+    hooks:
+      - id: insert-license
+        files: \.(c|cpp|cc|cxx|h|hpp|hxx)$
+        args:
+          - --license-filepath
+          - .license-header.txt
+          - --comment-style
+          - /*| *| */
+          
+  # Check for TODO/FIXME comments in critical files
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: end-of-file-fixer
+        exclude: \.patch$
+
+# Configuration for specific tools
+default_language_version:
+  python: python3
+
+# Files to exclude from all hooks
+exclude: |
+  (?x)^(
+    .*\.patch$|
+    .*\.diff$|
+    docs/_build/.*|
+    .*\.min\.(js|css)$|
+    node_modules/.*|
+    vendor/.*|
+    third_party/.*
+  )$
+
+# Minimum pre-commit version
+minimum_pre_commit_version: 2.20.0

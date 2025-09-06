@@ -1,0 +1,109 @@
+#!/usr/bin/make -f
+
+# Debian package build rules for fpga-npu
+
+# Uncomment this to turn on verbose mode
+#export DH_VERBOSE=1
+
+# Enable all hardening options
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# Get the package version
+DEB_VERSION := $(shell dpkg-parsechangelog -S Version)
+UPSTREAM_VERSION := $(shell echo $(DEB_VERSION) | sed 's/-[^-]*$$//')
+
+# Build directory
+BUILD_DIR := build
+
+%:
+	dh $@ --with systemd --builddirectory=$(BUILD_DIR)
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DENABLE_TESTING=ON \
+		-DENABLE_DOCUMENTATION=ON \
+		-DPACKAGE_VERSION=$(UPSTREAM_VERSION) \
+		-DLIB_INSTALL_DIR=lib/$(DEB_HOST_MULTIARCH)
+
+override_dh_auto_build:
+	dh_auto_build
+	# Build documentation
+	$(MAKE) -C $(BUILD_DIR) docs
+
+override_dh_auto_test:
+	# Run unit tests
+	cd $(BUILD_DIR) && ctest --output-on-failure
+
+override_dh_auto_install:
+	dh_auto_install
+	
+	# Install systemd service files
+	install -D -m 644 packaging/systemd/fpga-npu.service \
+		debian/fpga-npu/lib/systemd/system/fpga-npu.service
+	
+	# Install udev rules
+	install -D -m 644 packaging/udev/99-fpga-npu.rules \
+		debian/fpga-npu/lib/udev/rules.d/99-fpga-npu.rules
+	
+	# Install modprobe configuration
+	install -D -m 644 packaging/modprobe/fpga-npu.conf \
+		debian/fpga-npu/etc/modprobe.d/fpga-npu.conf
+	
+	# Install documentation
+	mkdir -p debian/fpga-npu-docs/usr/share/doc/fpga-npu
+	cp -r docs/* debian/fpga-npu-docs/usr/share/doc/fpga-npu/
+	
+	# Install examples
+	mkdir -p debian/fpga-npu-devel/usr/share/fpga-npu/examples
+	cp -r examples/* debian/fpga-npu-devel/usr/share/fpga-npu/examples/
+	
+	# Remove unnecessary files
+	find debian/fpga-npu*/usr -name "*.la" -delete
+	find debian/fpga-npu*/usr -name "*.pyc" -delete
+
+override_dh_installdocs:
+	dh_installdocs
+	# Install additional documentation
+	dh_installdocs -p fpga-npu README.md CHANGELOG.md
+	dh_installdocs -p fpga-npu-devel README.md
+
+override_dh_installchangelogs:
+	dh_installchangelogs CHANGELOG.md
+
+override_dh_strip:
+	dh_strip --dbg-package=fpga-npu-dbg
+
+override_dh_systemd_enable:
+	dh_systemd_enable --name=fpga-npu
+
+override_dh_systemd_start:
+	dh_systemd_start --name=fpga-npu
+
+override_dh_dkms:
+	# Install DKMS configuration for kernel module
+	install -D -m 644 packaging/dkms/dkms.conf \
+		debian/fpga-npu/usr/src/fpga-npu-$(UPSTREAM_VERSION)/dkms.conf
+	
+	# Copy kernel module source
+	mkdir -p debian/fpga-npu/usr/src/fpga-npu-$(UPSTREAM_VERSION)
+	cp -r software/driver/* \
+		debian/fpga-npu/usr/src/fpga-npu-$(UPSTREAM_VERSION)/
+
+override_dh_clean:
+	dh_clean
+	# Clean build artifacts
+	rm -rf $(BUILD_DIR)
+	$(MAKE) -C software/driver clean || true
+
+# Don't run tests that require hardware
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	cd $(BUILD_DIR) && ctest --output-on-failure -E "hardware|integration"
+endif
+
+.PHONY: override_dh_auto_configure override_dh_auto_build override_dh_auto_test \
+        override_dh_auto_install override_dh_installdocs override_dh_installchangelogs \
+        override_dh_strip override_dh_systemd_enable override_dh_systemd_start \
+        override_dh_dkms override_dh_clean

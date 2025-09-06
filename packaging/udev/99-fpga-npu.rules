@@ -1,0 +1,33 @@
+# UDEV rules for FPGA NPU devices
+# This file should be installed to /lib/udev/rules.d/99-fpga-npu.rules
+
+# Match FPGA NPU PCI devices by vendor and device ID
+SUBSYSTEM=="pci", ATTR{vendor}=="0x10ee", ATTR{device}=="0x903f", TAG+="systemd", ENV{SYSTEMD_WANTS}="fpga-npu.service"
+
+# Create device nodes with appropriate permissions
+KERNEL=="fpga_npu[0-9]*", SUBSYSTEM=="fpga_npu", MODE="0666", GROUP="users"
+KERNEL=="fpga_npu[0-9]*", SUBSYSTEM=="fpga_npu", TAG+="uaccess"
+
+# Create symlinks for easier access
+KERNEL=="fpga_npu0", SUBSYSTEM=="fpga_npu", SYMLINK+="npu0"
+KERNEL=="fpga_npu1", SUBSYSTEM=="fpga_npu", SYMLINK+="npu1"
+KERNEL=="fpga_npu2", SUBSYSTEM=="fpga_npu", SYMLINK+="npu2"
+KERNEL=="fpga_npu3", SUBSYSTEM=="fpga_npu", SYMLINK+="npu3"
+
+# Set device attributes
+ACTION=="add", SUBSYSTEM=="fpga_npu", ATTR{device/power/control}="auto"
+ACTION=="add", SUBSYSTEM=="fpga_npu", ATTR{device/power/autosuspend_delay_ms}="5000"
+
+# Load firmware if available
+ACTION=="add", SUBSYSTEM=="fpga_npu", RUN+="/usr/bin/npu-firmware-loader $kernel"
+
+# Notify systemd about device addition/removal
+ACTION=="add", SUBSYSTEM=="fpga_npu", TAG+="systemd", ENV{SYSTEMD_WANTS}="fpga-npu-device@%k.service"
+ACTION=="remove", SUBSYSTEM=="fpga_npu", TAG+="systemd"
+
+# Set environment variables for applications
+ACTION=="add", SUBSYSTEM=="fpga_npu", ENV{NPU_DEVICE_PATH}="/dev/%k"
+ACTION=="add", SUBSYSTEM=="fpga_npu", ENV{NPU_DEVICE_ID}="%k"
+
+# Security: Prevent unauthorized access in multi-user environments
+ACTION=="add", SUBSYSTEM=="fpga_npu", TEST!="/etc/fpga-npu/allow-all-users", MODE="0660", GROUP="fpga-npu"

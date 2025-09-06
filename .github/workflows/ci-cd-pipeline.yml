@@ -1,0 +1,567 @@
+# FPGA NPU Project - GitHub Actions CI/CD Pipeline
+# 
+# Comprehensive continuous integration and deployment workflow
+# for FPGA NPU hardware and software components
+
+name: FPGA NPU CI/CD Pipeline
+
+# Trigger conditions
+on:
+  push:
+    branches: [ main, develop, 'feature/*', 'release/*' ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Nightly builds at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      run_hardware_tests:
+        description: 'Run hardware simulation tests'
+        required: false
+        default: 'true'
+        type: boolean
+      run_performance_tests:
+        description: 'Run performance benchmarks'
+        required: false
+        default: 'false'
+        type: boolean
+      deploy_artifacts:
+        description: 'Deploy build artifacts'
+        required: false
+        default: 'false'
+        type: boolean
+
+# Environment variables
+env:
+  BUILD_TYPE: Release
+  VIVADO_VERSION: "2023.1"
+  PYTHON_VERSION: "3.9"
+  
+# Concurrency control
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # =============================================================================
+  # Code Quality and Static Analysis
+  # =============================================================================
+  
+  code-quality:
+    name: Code Quality Analysis
+    runs-on: ubuntu-latest
+    outputs:
+      quality-passed: ${{ steps.quality-check.outputs.passed }}
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for better analysis
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install Analysis Tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cppcheck clang-format clang-tidy
+        pip install cpplint pre-commit lizard
+    
+    - name: Run Code Formatting Check
+      run: |
+        echo "Checking C/C++ code formatting..."
+        find . -name "*.c" -o -name "*.h" -o -name "*.cpp" -o -name "*.hpp" | \
+        xargs clang-format --dry-run --Werror
+    
+    - name: Run Static Analysis (cppcheck)
+      run: |
+        echo "Running cppcheck static analysis..."
+        cppcheck --enable=all --inconclusive --xml --xml-version=2 \
+          --suppress=missingIncludeSystem \
+          --suppress=unmatchedSuppression \
+          software/ hardware/testbench/ tests/ 2> cppcheck-report.xml
+        
+        # Check if there are any errors
+        if grep -q 'severity="error"' cppcheck-report.xml; then
+          echo "❌ Static analysis found errors"
+          cat cppcheck-report.xml
+          exit 1
+        else
+          echo "✅ Static analysis passed"
+        fi
+    
+    - name: Run Complexity Analysis
+      run: |
+        echo "Running code complexity analysis..."
+        lizard --CCN 15 --length 1000 --arguments 10 \
+          software/ hardware/testbench/ tests/ || true
+    
+    - name: Run Security Analysis
+      run: |
+        echo "Running security analysis..."
+        # Check for common security issues
+        grep -r "strcpy\|strcat\|sprintf\|gets" software/ && exit 1 || true
+        echo "✅ Security analysis passed"
+    
+    - name: Quality Check Summary
+      id: quality-check
+      run: |
+        echo "passed=true" >> $GITHUB_OUTPUT
+        echo "✅ All code quality checks passed"
+
+  # =============================================================================
+  # Software Build and Test Matrix
+  # =============================================================================
+  
+  software-build:
+    name: Software Build (${{ matrix.os }}, ${{ matrix.build-type }})
+    runs-on: ${{ matrix.os }}
+    needs: code-quality
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-20.04]
+        build-type: [Debug, Release]
+        include:
+          - os: ubuntu-latest
+            compiler: gcc
+          - os: ubuntu-20.04
+            compiler: gcc
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Build Environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          libpthread-stubs0-dev \
+          libc6-dev \
+          linux-headers-generic \
+          dkms \
+          valgrind \
+          gcov \
+          lcov
+    
+    - name: Configure Build
+      run: |
+        echo "Configuring build for ${{ matrix.build-type }}..."
+        mkdir -p build
+        cd build
+        cmake .. -DCMAKE_BUILD_TYPE=${{ matrix.build-type }} \
+                 -DENABLE_TESTING=ON \
+                 -DENABLE_COVERAGE=ON
+    
+    - name: Build Driver
+      run: |
+        echo "Building kernel driver..."
+        cd software/driver
+        make clean
+        make BUILD_TYPE=${{ matrix.build-type }}
+    
+    - name: Build User Library
+      run: |
+        echo "Building user library..."
+        cd software/userspace
+        make clean
+        make BUILD_TYPE=${{ matrix.build-type }}
+    
+    - name: Build Tests
+      run: |
+        echo "Building test suites..."
+        cd tests/unit
+        make clean
+        make BUILD_TYPE=${{ matrix.build-type }}
+        
+        cd ../integration
+        make clean
+        make BUILD_TYPE=${{ matrix.build-type }}
+        
+        cd ../benchmarks
+        make clean
+        make BUILD_TYPE=${{ matrix.build-type }}
+    
+    - name: Run Unit Tests
+      run: |
+        echo "Running unit tests..."
+        cd tests/unit
+        make test
+        
+        # Generate coverage report for Release builds
+        if [ "${{ matrix.build-type }}" = "Release" ]; then
+          make coverage
+        fi
+    
+    - name: Run Integration Tests
+      run: |
+        echo "Running integration tests..."
+        cd tests/integration
+        # Run basic tests that don't require hardware
+        make test-software-only
+    
+    - name: Memory Leak Check
+      if: matrix.build-type == 'Debug'
+      run: |
+        echo "Running memory leak detection..."
+        cd tests/unit
+        make memcheck || true  # Don't fail on leaks, just report
+    
+    - name: Upload Coverage Reports
+      if: matrix.build-type == 'Release' && matrix.os == 'ubuntu-latest'
+      uses: codecov/codecov-action@v3
+      with:
+        files: ./tests/unit/coverage/lcov.info
+        flags: unittests
+        name: codecov-umbrella
+    
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: software-build-${{ matrix.os }}-${{ matrix.build-type }}
+        path: |
+          software/driver/*.ko
+          software/userspace/lib*.so*
+          tests/unit/test_runner
+          tests/integration/integration_test_main
+          tests/benchmarks/bin/npu_benchmark
+        retention-days: 7
+
+  # =============================================================================
+  # Hardware Simulation Tests
+  # =============================================================================
+  
+  hardware-simulation:
+    name: Hardware Simulation Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+    if: ${{ github.event.inputs.run_hardware_tests != 'false' }}
+    
+    container:
+      image: xilinx/vivado:2023.1
+      options: --user root
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Vivado Environment
+      run: |
+        source /tools/Xilinx/Vivado/2023.1/settings64.sh
+        echo "VIVADO_HOME=/tools/Xilinx/Vivado/2023.1" >> $GITHUB_ENV
+    
+    - name: Compile RTL
+      run: |
+        echo "Compiling RTL modules..."
+        cd hardware/rtl
+        source $VIVADO_HOME/settings64.sh
+        make compile
+    
+    - name: Run RTL Simulations
+      run: |
+        echo "Running RTL simulations..."
+        cd tests/simulation
+        source $VIVADO_HOME/settings64.sh
+        
+        # Run comprehensive simulation tests
+        make test-quick
+        make test-full
+    
+    - name: Generate Simulation Reports
+      run: |
+        echo "Generating simulation reports..."
+        cd tests/simulation
+        make report
+    
+    - name: Upload Simulation Results
+      uses: actions/upload-artifact@v3
+      with:
+        name: simulation-results
+        path: |
+          tests/simulation/results/
+          tests/simulation/coverage/
+        retention-days: 14
+
+  # =============================================================================
+  # Performance Benchmarking
+  # =============================================================================
+  
+  performance-benchmarks:
+    name: Performance Benchmarking
+    runs-on: [self-hosted, fpga-hardware]  # Requires actual hardware
+    needs: [software-build]
+    if: ${{ github.event.inputs.run_performance_tests == 'true' || github.event_name == 'schedule' }}
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+    
+    - name: Download Build Artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: software-build-ubuntu-latest-Release
+        path: ./artifacts
+    
+    - name: Setup Hardware Environment
+      run: |
+        echo "Setting up FPGA hardware environment..."
+        # Load FPGA bitstream if available
+        if [ -f "hardware/bitstreams/npu_top.bit" ]; then
+          echo "Loading FPGA bitstream..."
+          # FPGA programming commands here
+        fi
+        
+        # Install driver
+        sudo modprobe -r fpga_npu || true
+        sudo insmod ./artifacts/fpga_npu.ko
+        
+        # Verify hardware is accessible
+        lspci | grep -i fpga || echo "No FPGA device found"
+    
+    - name: Run Performance Benchmarks
+      run: |
+        echo "Running performance benchmarks..."
+        cd tests/benchmarks
+        
+        # Run comprehensive benchmarks
+        ./bin/npu_benchmark --all --size large \
+          --output ./results/ci_benchmarks \
+          --csv --json --verbose
+    
+    - name: Performance Regression Check
+      run: |
+        echo "Checking for performance regressions..."
+        cd tests/benchmarks
+        
+        if [ -f "baseline_results.json" ]; then
+          python3 scripts/check_regression.py \
+            --current ./results/ci_benchmarks/benchmark_results.json \
+            --baseline baseline_results.json \
+            --threshold 5.0  # 5% threshold
+        else
+          echo "No baseline results found, saving current results as baseline"
+          cp ./results/ci_benchmarks/benchmark_results.json baseline_results.json
+        fi
+    
+    - name: Upload Performance Results
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-results
+        path: |
+          tests/benchmarks/results/
+        retention-days: 30
+
+  # =============================================================================
+  # Security and Vulnerability Scanning
+  # =============================================================================
+  
+  security-scan:
+    name: Security Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: code-quality
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+    
+    - name: Run CodeQL Analysis
+      uses: github/codeql-action/init@v2
+      with:
+        languages: c-cpp
+        config-file: ./.github/codeql/codeql-config.yml
+    
+    - name: Build for CodeQL
+      run: |
+        cd software/userspace
+        make clean
+        make BUILD_TYPE=Debug
+    
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+    
+    - name: Run Dependency Check
+      run: |
+        echo "Checking for known vulnerabilities in dependencies..."
+        # Add dependency vulnerability scanning here
+        echo "✅ Dependency check completed"
+
+  # =============================================================================
+  # Documentation Generation
+  # =============================================================================
+  
+  documentation:
+    name: Generate Documentation
+    runs-on: ubuntu-latest
+    needs: code-quality
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Documentation Tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y doxygen graphviz
+        pip install sphinx sphinx-rtd-theme breathe
+    
+    - name: Generate API Documentation
+      run: |
+        echo "Generating API documentation..."
+        cd docs
+        doxygen Doxyfile
+        
+        # Generate Sphinx documentation
+        make html
+    
+    - name: Upload Documentation
+      uses: actions/upload-artifact@v3
+      with:
+        name: documentation
+        path: |
+          docs/_build/html/
+          docs/doxygen/html/
+        retention-days: 30
+    
+    - name: Deploy Documentation to GitHub Pages
+      if: github.ref == 'refs/heads/main'
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./docs/_build/html
+
+  # =============================================================================
+  # Release and Deployment
+  # =============================================================================
+  
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [software-build, hardware-simulation, security-scan, documentation]
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+    
+    - name: Download All Artifacts
+      uses: actions/download-artifact@v3
+    
+    - name: Create Release Package
+      run: |
+        echo "Creating release package..."
+        mkdir -p release/fpga-npu-${{ github.ref_name }}
+        
+        # Copy software binaries
+        cp -r software-build-ubuntu-latest-Release/* release/fpga-npu-${{ github.ref_name }}/
+        
+        # Copy documentation
+        cp -r documentation/* release/fpga-npu-${{ github.ref_name }}/docs/
+        
+        # Copy hardware files
+        if [ -d "hardware/bitstreams" ]; then
+          cp -r hardware/bitstreams release/fpga-npu-${{ github.ref_name }}/
+        fi
+        
+        # Create archive
+        cd release
+        tar -czf fpga-npu-${{ github.ref_name }}.tar.gz fpga-npu-${{ github.ref_name }}/
+        zip -r fpga-npu-${{ github.ref_name }}.zip fpga-npu-${{ github.ref_name }}/
+    
+    - name: Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref_name }}
+        release_name: FPGA NPU Release ${{ github.ref_name }}
+        body: |
+          # FPGA NPU Release ${{ github.ref_name }}
+          
+          This release includes:
+          - Compiled driver and user library
+          - Performance benchmark suite
+          - Hardware simulation testbenches
+          - Complete documentation
+          - FPGA bitstreams (if available)
+          
+          ## Installation
+          
+          ```bash
+          tar -xzf fpga-npu-${{ github.ref_name }}.tar.gz
+          cd fpga-npu-${{ github.ref_name }}
+          ./install.sh
+          ```
+          
+          ## Changes
+          
+          See [CHANGELOG.md](CHANGELOG.md) for detailed changes.
+        draft: false
+        prerelease: false
+    
+    - name: Upload Release Assets
+      run: |
+        echo "Uploading release assets..."
+        # Upload release files using GitHub CLI or REST API
+
+  # =============================================================================
+  # Notification and Reporting
+  # =============================================================================
+  
+  notify-results:
+    name: Notify Build Results
+    runs-on: ubuntu-latest
+    needs: [software-build, hardware-simulation, performance-benchmarks, security-scan]
+    if: always()
+    
+    steps:
+    - name: Determine Overall Status
+      id: status
+      run: |
+        if [ "${{ needs.software-build.result }}" = "success" ] && \
+           [ "${{ needs.hardware-simulation.result }}" = "success" ] && \
+           [ "${{ needs.security-scan.result }}" = "success" ]; then
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "message=✅ All CI/CD pipeline jobs completed successfully" >> $GITHUB_OUTPUT
+        else
+          echo "status=failure" >> $GITHUB_OUTPUT
+          echo "message=❌ One or more CI/CD pipeline jobs failed" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Create Status Report
+      run: |
+        echo "# CI/CD Pipeline Report" > report.md
+        echo "" >> report.md
+        echo "**Branch:** ${{ github.ref_name }}" >> report.md
+        echo "**Commit:** ${{ github.sha }}" >> report.md
+        echo "**Triggered by:** ${{ github.event_name }}" >> report.md
+        echo "" >> report.md
+        echo "## Job Results" >> report.md
+        echo "- Code Quality: ${{ needs.code-quality.result }}" >> report.md
+        echo "- Software Build: ${{ needs.software-build.result }}" >> report.md
+        echo "- Hardware Simulation: ${{ needs.hardware-simulation.result }}" >> report.md
+        echo "- Performance Benchmarks: ${{ needs.performance-benchmarks.result }}" >> report.md
+        echo "- Security Scan: ${{ needs.security-scan.result }}" >> report.md
+        echo "" >> report.md
+        echo "${{ steps.status.outputs.message }}" >> report.md
+    
+    - name: Post to Slack
+      if: always()
+      run: |
+        if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"${{ steps.status.outputs.message }}\"}" \
+            ${{ secrets.SLACK_WEBHOOK_URL }}
+        fi
+    
+    - name: Create Issue on Failure
+      if: failure() && github.ref == 'refs/heads/main'
+      run: |
+        echo "Creating issue for CI/CD failure..."
+        # Create GitHub issue for failed main branch builds

@@ -1,0 +1,72 @@
+# Package: fpga-npu
+# Version: 1.0.0
+
+# Debian package control file
+Source: fpga-npu
+Section: misc
+Priority: optional
+Maintainer: FPGA NPU Team <npu-team@example.com>
+Build-Depends: debhelper (>= 9), cmake (>= 3.10), gcc, linux-headers-generic
+Standards-Version: 4.1.3
+Homepage: https://github.com/example/fpga-npu
+Vcs-Git: https://github.com/example/fpga-npu.git
+Vcs-Browser: https://github.com/example/fpga-npu
+
+Package: fpga-npu
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, linux-image-generic
+Recommends: fpga-npu-devel
+Description: FPGA Neural Processing Unit drivers and runtime
+ This package provides kernel drivers and runtime libraries for
+ FPGA-based Neural Processing Units (NPUs). It includes:
+ .
+ * Kernel driver module for NPU device management
+ * User-space runtime library for NPU operations
+ * Command-line utilities for device management
+ * System service for NPU monitoring
+ .
+ The NPU provides hardware acceleration for neural network
+ inference and training workloads.
+
+Package: fpga-npu-devel
+Architecture: amd64
+Depends: fpga-npu (= ${binary:Version}), ${misc:Depends}
+Description: Development files for FPGA NPU
+ This package contains development files for building applications
+ that use the FPGA NPU:
+ .
+ * Header files for the NPU API
+ * Static libraries for linking
+ * CMake configuration files
+ * Code examples and tutorials
+ * API documentation
+ .
+ Install this package if you want to develop applications that
+ use the FPGA NPU for neural network acceleration.
+
+Package: fpga-npu-docs
+Architecture: all
+Depends: ${misc:Depends}
+Description: Documentation for FPGA NPU
+ This package contains comprehensive documentation for the FPGA NPU:
+ .
+ * User guide and installation instructions
+ * API reference documentation
+ * Developer guide and architecture overview
+ * Performance tuning guide
+ * Tutorial and example code
+ .
+ The documentation is available in HTML format and can be
+ viewed with any web browser.
+
+Package: fpga-npu-dbg
+Architecture: amd64
+Section: debug
+Priority: extra
+Depends: fpga-npu (= ${binary:Version}), ${misc:Depends}
+Description: Debug symbols for FPGA NPU
+ This package contains debug symbols for the FPGA NPU packages.
+ .
+ Install this package if you need to debug applications that
+ use the FPGA NPU or if you want to report bugs with meaningful
+ stack traces.

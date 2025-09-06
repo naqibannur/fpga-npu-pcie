@@ -1,0 +1,46 @@
+[Unit]
+Description=FPGA NPU System Service
+Documentation=man:fpga-npu(8)
+After=multi-user.target
+Wants=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/bin/npu-daemon --daemon
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStop=/bin/kill -TERM $MAINPID
+PIDFile=/var/run/fpga-npu.pid
+User=root
+Group=root
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log /var/run /dev
+PrivateTmp=true
+PrivateDevices=false
+ProtectKernelTunables=true
+ProtectKernelModules=false
+ProtectControlGroups=true
+RestrictRealtime=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# Environment
+Environment=NPU_LOG_LEVEL=INFO
+Environment=NPU_CONFIG_FILE=/etc/fpga-npu/npu.conf
+
+[Install]
+WantedBy=multi-user.target
+Alias=npu.service

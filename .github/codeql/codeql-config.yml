@@ -1,0 +1,58 @@
+# CodeQL Configuration for FPGA NPU Project
+# Custom queries and settings for security analysis
+
+name: "FPGA NPU CodeQL Configuration"
+
+# Language-specific configurations
+queries:
+  - name: security-extended
+    uses: security-extended
+  - name: security-and-quality
+    uses: security-and-quality
+
+# Custom query filters
+query-filters:
+  - exclude:
+      problem.severity: "note"
+  - exclude:
+      id: cpp/potentially-dangerous-function
+      # Allow specific functions that are used safely
+      paths:
+        - "**/tests/**"
+
+# Path filters for analysis
+paths:
+  - "software/"
+  - "tests/"
+  - "hardware/testbench/"
+
+# Paths to ignore
+paths-ignore:
+  - "**/*.min.js"
+  - "**/*.min.css"
+  - "**/node_modules/**"
+  - "**/third_party/**"
+  - "**/vendor/**"
+  - "**/*.patch"
+  - "**/*.diff"
+
+# Build configuration
+cpp:
+  # Specify C++ standard
+  standard: "c++17"
+  
+  # Include paths for analysis
+  include-paths:
+    - "software/userspace"
+    - "software/driver" 
+    - "tests/unit"
+    - "tests/integration"
+    - "tests/benchmarks"
+
+# Compilation database
+compilation-database: "compile_commands.json"
+
+# Custom analysis settings
+packs:
+  - codeql/cpp-queries:all
+  - codeql/cpp-queries:security-extended
